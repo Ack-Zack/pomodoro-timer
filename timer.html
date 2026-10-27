@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Таймер для учёбы</title>
+  <style>
+    :root {
+      --bg: #f1f5f9;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted-text: #334155;
+      --accent: #0369a1;
+      --accent-soft: #0369a1;
+      --border: #cbd5e1;
+      --reset-bg: #475569;
+      --clear-bg: #b91c1c;
+    }
+
+    .dark {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --text: #f1f5f9;
+      --muted-text: #cbd5e1;
+      --accent: #38bdf8;
+      --accent-soft: #0369a1;
+      --border: #475569;
+      --reset-bg: #475569;
+      --clear-bg: #b91c1c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+
+    .timer {
+      background: var(--card);
+      border-radius: 20px;
+      padding: 48px 40px;
+      text-align: center;
+      min-width: 320px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    }
+
+    .time {
+      font-size: 96px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 2px;
+      margin: 16px 0 32px;
+      color: var(--accent);
+    }
+
+    .phase {
+      margin: 0;
+      color: #cbd5e1;
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .completed {
+      margin: 0 0 24px;
+      color: var(--muted-text);
+    }
+
+    .daily-summary {
+      margin: 24px 0 0;
+      text-align: left;
+      color: var(--muted-text);
+    }
+
+    .daily-summary h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .daily-summary ul {
+      margin: 0;
+      padding-left: 24px;
+    }
+
+    .weekly-statistics {
+      margin: 24px 0 0;
+      color: var(--muted-text);
+    }
+
+    .weekly-statistics h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .weekly-statistics table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    .weekly-statistics th,
+    .weekly-statistics td {
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .weekly-statistics td:last-child,
+    .weekly-statistics th:last-child {
+      text-align: right;
+    }
+
+    .status {
+      min-height: 24px;
+      margin: 20px 0 0;
+      color: var(--muted-text);
+    }
+
+    .reset {
+      display: block;
+      margin: 12px auto 0;
+      background: var(--reset-bg);
+    }
+
+    .clear-statistics {
+      margin-top: 20px;
+      background: var(--clear-bg);
+    }
+
+    button {
+      font-size: 20px;
+      font-weight: 600;
+      padding: 14px 48px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      background: var(--accent-soft);
+      color: #fff;
+      transition: transform 0.1s ease, opacity 0.2s ease;
+    }
+
+    button:hover { opacity: 0.9; }
+    button:active { transform: scale(0.97); }
+  </style>
+</head>
+<body>
+  <div class="timer">
+    <button id="theme-toggle" type="button" aria-pressed="false">Включить тёмную тему</button>
+    <p class="phase" id="phase">Рабочий подход</p>
+    <div class="time" id="time">25:00</div>
+    <button id="start">Старт</button>
+    <button class="reset" id="reset">Сбросить подход</button>
+    <p class="completed">Завершённые подходы: <span id="completed">0</span></p>
+    <section class="daily-summary" aria-labelledby="daily-summary-title">
+      <h2 id="daily-summary-title">Подходы по дням</h2>
+      <ul id="daily-summary" aria-live="polite"></ul>
+    </section>
+    <section class="weekly-statistics" aria-labelledby="weekly-statistics-title">
+      <h2 id="weekly-statistics-title">Статистика за 7 дней</h2>
+      <table>
+        <thead>
+          <tr><th scope="col">Дата</th><th scope="col">Подходы</th></tr>
+        </thead>
+        <tbody id="weekly-statistics"></tbody>
+      </table>
+    </section>
+    <button class="clear-statistics" id="clear-statistics">Сбросить статистику</button>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </div>
+
+  <script>
+    const STUDY_SECONDS = 25 * 60;
+    const BREAK_SECONDS = 5 * 60;
+    const STORAGE_KEY = "pomodoro_log";
+    const THEME_STORAGE_KEY = "pomodoro_theme";
+    let phase = "study";
+    let remaining = STUDY_SECONDS;
+    let intervalId = null;
+    let audioContext = null;
+    let audioError = false;
+
+    const timeEl = document.getElementById("time");
+    const phaseEl = document.getElementById("phase");
+    const themeToggleBtn = document.getElementById("theme-toggle");
+    const startBtn = document.getElementById("start");
+    const resetBtn = document.getElementById("reset");
+    const completedEl = document.getElementById("completed");
+    const dailySummaryEl = document.getElementById("daily-summary");
+    const weeklyStatisticsEl = document.getElementById("weekly-statistics");
+    const clearStatisticsBtn = document.getElementById("clear-statistics");
+    const statusEl = document.getElementById("status");
+    let completedPomodoros = [];
+    let storageReady = true;
+
+    function updateThemeToggle() {
+      const isDark = document.body.classList.contains("dark");
+      themeToggleBtn.textContent = isDark ? "Включить светлую тему" : "Включить тёмную тему";
+      themeToggleBtn.setAttribute("aria-pressed", String(isDark));
+    }
+
+    try {
+      const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+      if (savedTheme === "dark") {
+        document.body.classList.add("dark");
+      } else if (savedTheme !== null && savedTheme !== "light") {
+        throw new Error("Сохранённое значение темы должно быть dark или light.");
+      }
+    } catch (error) {
+      statusEl.textContent = "Не удалось загрузить сохранённую тему; используется светлая тема.";
+      console.error("Не удалось загрузить тему оформления.", error);
+    }
+
+    themeToggleBtn.addEventListener("click", () => {
+      const isDark = document.body.classList.toggle("dark");
+      updateThemeToggle();
+
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, isDark ? "dark" : "light");
+      } catch (error) {
+        statusEl.textContent = "Тема изменена, но не удалось сохранить выбор в браузере.";
+        console.error("Не удалось сохранить тему оформления.", error);
+      }
+    });
+
+    updateThemeToggle();
+
+    function loadCompletedPomodoros() {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved === null) {
+        return [];
+      }
+
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed) || !parsed.every(
+        timestamp => typeof timestamp === "string" && Number.isFinite(Date.parse(timestamp))
+      )) {
+        throw new Error("Ожидался список отметок времени завершённых подходов.");
+      }
+
+      return parsed;
+    }
+
+    function getLocalDateKey(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function countCompletedByDate() {
+      const countsByDate = new Map();
+      for (const timestamp of completedPomodoros) {
+        const date = new Date(timestamp);
+        const dateKey = getLocalDateKey(date);
+        countsByDate.set(dateKey, (countsByDate.get(dateKey) || 0) + 1);
+      }
+
+      return countsByDate;
+    }
+
+    function renderDailySummary(countsByDate) {
+      dailySummaryEl.replaceChildren();
+      if (countsByDate.size === 0) {
+        const item = document.createElement("li");
+        item.textContent = "Пока нет завершённых подходов.";
+        dailySummaryEl.append(item);
+        return;
+      }
+
+      const sortedDates = [...countsByDate.keys()].sort().reverse();
+      for (const dateKey of sortedDates) {
+        const [year, month, day] = dateKey.split("-").map(Number);
+        const date = new Date(year, month - 1, day);
+        const item = document.createElement("li");
+        item.textContent = `${date.toLocaleDateString("ru-RU")}: ${countsByDate.get(dateKey)}`;
+        dailySummaryEl.append(item);
+      }
+    }
+
+    function renderWeeklyStatistics(countsByDate) {
+      weeklyStatisticsEl.replaceChildren();
+      const today = new Date();
+      today.setHours(12, 0, 0, 0);
+
+      for (let daysAgo = 6; daysAgo >= 0; daysAgo--) {
+        const date = new Date(today);
+        date.setDate(today.getDate() - daysAgo);
+        const dateKey = getLocalDateKey(date);
+        const row = document.createElement("tr");
+        const dateCell = document.createElement("td");
+        const countCell = document.createElement("td");
+
+        dateCell.textContent = date.toLocaleDateString("ru-RU", {
+          weekday: "short",
+          day: "numeric",
+          month: "long",
+          year: "numeric"
+        });
+        countCell.textContent = String(countsByDate.get(dateKey) || 0);
+        row.append(dateCell, countCell);
+        weeklyStatisticsEl.append(row);
+      }
+    }
+
+    function renderStatistics() {
+      const countsByDate = countCompletedByDate();
+      renderDailySummary(countsByDate);
+      renderWeeklyStatistics(countsByDate);
+    }
+
+    function recordCompletedPomodoro() {
+      const updated = [...completedPomodoros, new Date().toISOString()];
+
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      } catch (error) {
+        console.error("Не удалось сохранить статистику подходов.", error);
+        return false;
+      }
+
+      completedPomodoros = updated;
+      completedEl.textContent = String(completedPomodoros.length);
+      renderStatistics();
+      console.info("Завершённые подходы:", completedPomodoros.length);
+      return true;
+    }
+
+    function switchPhase(nextPhase) {
+      phase = nextPhase;
+      remaining = phase === "study" ? STUDY_SECONDS : BREAK_SECONDS;
+      phaseEl.textContent = phase === "study" ? "Рабочий подход" : "Перерыв";
+      resetBtn.textContent = phase === "study" ? "Сбросить подход" : "Сбросить перерыв";
+      render();
+    }
+
+    function format(seconds) {
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+    }
+
+    function render() {
+      timeEl.textContent = format(remaining);
+    }
+
+    function showAudioError(error) {
+      audioError = true;
+      statusEl.textContent = "Таймер работает, но звуковое уведомление недоступно.";
+      console.error("Не удалось воспроизвести звуковое уведомление.", error);
+    }
+
+    function prepareAudio() {
+      if (audioContext === null) {
+        const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextConstructor) {
+          showAudioError(new Error("Браузер не поддерживает Web Audio API."));
+          return;
+        }
+
+        try {
+          audioContext = new AudioContextConstructor();
+        } catch (error) {
+          showAudioError(error);
+          return;
+        }
+      }
+
+      if (audioContext.state === "suspended") {
+        audioContext.resume().catch(showAudioError);
+      }
+    }
+
+    function playTone(frequency, startTime, duration) {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(0.2, startTime + 0.02);
+      gain.gain.setValueAtTime(0.2, startTime + duration - 0.04);
+      gain.gain.linearRampToValueAtTime(0, startTime + duration);
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(startTime);
+      oscillator.stop(startTime + duration);
+    }
+
+    function playPhaseEndSound(completedPhase) {
+      if (audioContext === null) {
+        return;
+      }
+
+      const play = () => {
+        const now = audioContext.currentTime;
+        if (completedPhase === "study") {
+          playTone(660, now, 0.2);
+          playTone(880, now + 0.24, 0.3);
+        } else {
+          playTone(880, now, 0.2);
+          playTone(660, now + 0.24, 0.3);
+        }
+      };
+
+      try {
+        if (audioContext.state === "running") {
+          play();
+        } else {
+          audioContext.resume().then(play).catch(showAudioError);
+        }
+      } catch (error) {
+        showAudioError(error);
+      }
+    }
+
+    function stop() {
+      clearInterval(intervalId);
+      intervalId = null;
+      startBtn.textContent = "Старт";
+    }
+
+    resetBtn.addEventListener("click", () => {
+      stop();
+      remaining = phase === "study" ? STUDY_SECONDS : BREAK_SECONDS;
+      render();
+      statusEl.textContent = phase === "study"
+        ? "Рабочий подход сброшен."
+        : "Перерыв сброшен.";
+    });
+
+    clearStatisticsBtn.addEventListener("click", () => {
+      if (!confirm("Удалить всю сохранённую статистику подходов?")) {
+        return;
+      }
+
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (error) {
+        statusEl.textContent = "Не удалось удалить статистику из браузера.";
+        console.error("Не удалось удалить статистику подходов.", error);
+        return;
+      }
+
+      completedPomodoros = [];
+      completedEl.textContent = "0";
+      storageReady = true;
+      startBtn.disabled = false;
+      renderStatistics();
+      statusEl.textContent = "Статистика сброшена. Таймер не изменён.";
+    });
+
+    try {
+      completedPomodoros = loadCompletedPomodoros();
+      completedEl.textContent = String(completedPomodoros.length);
+      renderStatistics();
+    } catch (error) {
+      storageReady = false;
+      startBtn.disabled = true;
+      statusEl.textContent = "Не удалось загрузить статистику подходов из браузера.";
+      console.error("Не удалось загрузить статистику подходов.", error);
+    }
+
+    startBtn.addEventListener("click", () => {
+      if (!storageReady) {
+        return;
+      }
+
+      if (intervalId !== null) {
+        stop();
+        return;
+      }
+
+      prepareAudio();
+      startBtn.textContent = "Пауза";
+      intervalId = setInterval(() => {
+        remaining--;
+        render();
+
+        if (remaining <= 0) {
+          remaining = 0;
+          if (phase === "study") {
+            const saved = recordCompletedPomodoro();
+            switchPhase("break");
+            statusEl.textContent = saved
+              ? "Подход завершён и сохранён. Начался перерыв."
+              : "Подход завершён, но статистику сохранить не удалось. Начался перерыв.";
+            playPhaseEndSound("study");
+          } else {
+            switchPhase("study");
+            statusEl.textContent = "Перерыв завершён. Начался новый рабочий подход.";
+            playPhaseEndSound("break");
+          }
+          if (audioError) {
+            statusEl.textContent += " Звуковое уведомление недоступно.";
+          }
+        }
+      }, 1000);
+    });
+
+    render();
+  </script>
+</body>
+</html>
